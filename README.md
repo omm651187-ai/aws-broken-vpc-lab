@@ -1,121 +1,69 @@
-# AWS Broken VPC & Connectivity Troubleshooting Lab
+# AWS Broken VPC Lab
 
-A hands-on cloud troubleshooting and infrastructure-as-code (IaC) project built with **Terraform** and **AWS**. This repository models support tickets involving network routing failures and security group rules in the `eu-north-1` region.
+A small Terraform lab for deploying an AWS VPC, public subnet, internet gateway, route table, and Amazon Linux 2023 EC2 instance. It is intended for practicing basic AWS networking and Terraform workflows.
 
----
+## What it creates
 
-## Architecture Overview
+- A VPC with CIDR `10.0.0.0/16`
+- A subnet with CIDR `10.0.1.0/24` and public IPv4 address assignment enabled
+- An internet gateway attached to the VPC
+- A route table with a default route (`0.0.0.0/0`) to the internet gateway, associated with the subnet
+- An Amazon Linux 2023 x86_64 EC2 instance of type `t3.micro`
 
-The lab provisions a VPC, public subnet, internet gateway, route table, security group, and Amazon Linux 2023 EC2 instance.
+The routing configuration is present in the current Terraform files. The instance does not configure an SSH key pair or a custom security group, so inbound SSH access is not set up by this project.
 
-- **Region:** `eu-north-1` (Europe/Stockholm)
-- **VPC:** `10.0.0.0/16`
-- **Public subnet:** `10.0.1.0/24` in `eu-north-1a`
-- **Internet gateway:** attached to the VPC
-- **Public route table:** associated with the subnet
-- **Security group:** `web-sg`
-- **EC2 instance:** `t3.micro`, Amazon Linux 2023
+## Prerequisites
 
-Terraform exports the instance's public address as `ec2_public_ip`.
+- Terraform 1.x
+- AWS CLI credentials with permission to create and delete the resources above
+- AWS account access in `eu-north-1`
 
----
+The AWS provider in `main.tf` currently selects the AWS CLI profile `userdemo-terraform`. Configure that profile locally, or change the provider configuration to use the profile or credential method you prefer. Keep credentials and private keys out of this repository.
 
-## Support Ticket Scenarios
+Verify the active identity before creating resources:
 
-The lab covers two common connectivity failures:
-
-1. **Missing internet gateway route**
-	- **Symptom:** The instance cannot access the internet, and internet traffic cannot reach the subnet.
-	- **Root cause:** The public route table has no default route (`0.0.0.0/0`) to the internet gateway.
-	- **Fix:** Add a default route to the internet gateway.
-
-2. **Missing security group SSH rule**
-	- **Symptom:** SSH attempts time out even when the instance has a public IP and the correct key.
-	- **Root cause:** The instance's security group does not allow inbound TCP port 22.
-	- **Fix:** Allow SSH from the client's public IP.
-
-**Current configuration:** Both fixes are already present in `main.tf`. A fresh `terraform apply` will create a reachable instance, assuming the AWS key pair and credentials are configured correctly. To reproduce the original failures in a disposable lab, remove `aws_route.public_internet_access` for the routing scenario, or remove the port 22 ingress rule from `aws_security_group.web_sg` for the SSH scenario.
-
----
-
-## Prerequisites & Tools
-
-- **Terraform** 1.x
-- **AWS CLI** authenticated to the intended AWS account
-- An EC2 key pair named `demokey` in `eu-north-1`
-- The matching private key file on your machine
-
-The AWS key pair name (`demokey`) is distinct from the local `.pem` filename. AWS only lets you download the private key when the pair is created. Never commit the private key to GitHub.
-
-Verify the CLI identity before provisioning:
-
-```bash
-aws sts get-caller-identity
+```sh
+aws sts get-caller-identity --profile userdemo-terraform
 ```
 
-For a named AWS CLI profile, select it in the current shell and verify the account:
+## Deploy
 
-```bash
-export AWS_PROFILE=your-profile-name
-aws sts get-caller-identity
-```
+From the project directory, initialize Terraform, validate the configuration, and review the plan:
 
----
-
-## Quick Start Guide
-
-### 1. Clone the repository
-
-```bash
-git clone https://github.com/omm651187-ai/aws-broken-vpc-lab.git
-cd aws-broken-vpc-lab
-```
-
-### 2. Initialize and review the plan
-
-```bash
+```sh
 terraform init
 terraform validate
 terraform plan
 ```
 
-The AWS provider region is set to `eu-north-1` in `main.tf`. Check the active AWS account and review the plan before proceeding.
+Create the resources only after reviewing the plan:
 
-### 3. Create the resources
-
-```bash
+```sh
 terraform apply
 ```
 
-Review the proposed changes and type `yes` only if they are expected. Get the public IP with:
+Terraform will ask for confirmation. After a successful apply, inspect the outputs:
 
-```bash
-terraform output -raw ec2_public_ip
+```sh
+terraform output
+terraform output -raw instance_public_ip
 ```
 
-### 4. Connect to the instance
+The available outputs are the instance public IP, instance ID, VPC ID, and subnet ID. Outputs become available in state after Terraform applies the configuration.
 
-For Amazon Linux 2023, the default SSH username is `ec2-user`:
+## Connectivity notes
 
-```bash
-chmod 400 ~/.ssh/demokey.pem
-ssh -i ~/.ssh/demokey.pem ec2-user@$(terraform output -raw ec2_public_ip)
-```
+The subnet has a public IP assignment setting and a default route through the internet gateway. That provides the network path for internet access, but does not configure inbound SSH. To enable SSH for a lab, add an EC2 key pair and a security group rule restricted to your current public IP (`x.x.x.x/32`). Avoid opening SSH to `0.0.0.0/0`.
 
-Update the key path if your private key is stored elsewhere.
+If the instance cannot reach the internet, check that it is running, has a public IP, and that the subnet's associated route table has an active `0.0.0.0/0` route targeting the attached internet gateway. Also verify that the AWS account and region match the Terraform provider configuration.
 
----
+## Cleanup
 
-## Security & Cleanup
+EC2 instances, storage, and public IPv4 addresses may incur AWS charges. When finished, review the destroy plan and remove the lab resources:
 
-The current security group allows SSH from `0.0.0.0/0`, exposing port 22 to the internet. For anything beyond a short-lived lab, restrict SSH to your current public IP using a `/32` CIDR before applying. HTTP on port 80 is also open to the internet.
-
-AWS may charge for the EC2 instance, storage, and public IPv4 address. Destroy the resources when finished:
-
-```bash
+```sh
+terraform plan -destroy
 terraform destroy
 ```
 
-Review the destroy plan before confirming.
-
-Terraform state can contain sensitive data, so it is excluded by `.gitignore` along with `.pem` keys and variable files. Commit `.terraform.lock.hcl` to keep provider versions consistent. This project uses local Terraform state; it does not configure shared remote state.
+Terraform state can contain sensitive information. The repository's `.gitignore` excludes local state, downloaded providers, variable files, and common local secrets; do not force-add these files to Git.
