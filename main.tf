@@ -1,99 +1,69 @@
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
 provider "aws" {
-  region = "eu-north-1"
+  region  = "eu-north-1"
+  profile = "userdemo-terraform"
 }
 
-# Dynamically fetch the latest Amazon Linux 2023 AMI for eu-north-1 (or any region)
-data "aws_ami" "al2023" {
-  most_recent = true
-  owners      = ["amazon"]
-
-  filter {
-    name   = "name"
-    values = ["al2023-ami-*-kernel-6.1-x86_64"]
-  }
-
-  filter {
-    name   = "virtualization-type"
-    values = ["hvm"]
-  }
-}
-
-# 1. Create a VPC
-resource "aws_vpc" "main" {
+# 1. Create the VPC
+resource "aws_vpc" "lab_vpc" {
   cidr_block           = "10.0.0.0/16"
   enable_dns_hostnames = true
-  tags = { Name = "Broken-Lab-VPC" }
+  tags = { Name = "broken-vpc" }
 }
 
-# 2. Create Internet Gateway (Intentionally missing from public route table - Bug #1)
-resource "aws_internet_gateway" "gw" {
-  vpc_id = aws_vpc.main.id
-  tags = { Name = "Lab-IGW" }
+# 2. Create an Internet Gateway
+resource "aws_internet_gateway" "lab_igw" {
+  vpc_id = aws_vpc.lab_vpc.id
+  tags = { Name = "broken-igw" }
 }
 
-# 3. Public Subnet
-resource "aws_subnet" "public" {
-  vpc_id            = aws_vpc.main.id
-  cidr_block        = "10.0.1.0/24"
-  availability_zone = "eu-north-1a" # Stockholm AZ
-  tags = { Name = "Public-Subnet" }
+# 3. Create a Subnet
+resource "aws_subnet" "lab_subnet" {
+  vpc_id                  = aws_vpc.lab_vpc.id
+  cidr_block              = "10.0.1.0/24"
+  map_public_ip_on_launch = true
+  tags                    = { Name = "broken-subnet" }
 }
 
-# Public Route Table (MISSING 0.0.0.0/0 route to IGW)
-resource "aws_route_table" "public" {
-  vpc_id = aws_vpc.main.id
-  tags = { Name = "Broken-Public-RT" }
+# 4. Create a Custom Route Table and public route
+resource "aws_route_table" "lab_rt" {
+  vpc_id = aws_vpc.lab_vpc.id
+  tags   = { Name = "broken-route-table" }
 }
 
-resource "aws_route_table_association" "public" {
-  subnet_id      = aws_subnet.public.id
-  route_table_id = aws_route_table.public.id
-}
-
-# Fix #1: Add the internet gateway route to the public route table
 resource "aws_route" "public_internet_access" {
-  route_table_id         = aws_route_table.public.id
+  route_table_id         = aws_route_table.lab_rt.id
   destination_cidr_block = "0.0.0.0/0"
-  gateway_id             = aws_internet_gateway.gw.id
+  gateway_id             = aws_internet_gateway.lab_igw.id
 }
 
-# 4. Security Group (Blocking SSH - Bug #2)
-resource "aws_security_group" "web_sg" {
-  name        = "web-sg"
-  description = "Web server security group"
-  vpc_id      = aws_vpc.main.id
-
-  ingress {
-  from_port   = 22
-  to_port     = 22
-  protocol    = "tcp"
-  cidr_blocks = ["0.0.0.0/0"] # (Allows SSH from anywhere for testing)
+resource "aws_route_table_association" "lab_assoc" {
+  subnet_id      = aws_subnet.lab_subnet.id
+  route_table_id = aws_route_table.lab_rt.id
 }
 
-  # BUG: Port 22 (SSH) is missing!
-  ingress {
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+# 5. Get the latest Amazon Linux 2023 AMI
+data "aws_ami" "amazon_linux" {
+  most_recent = true
+  owners      = ["amazon"]
+  filter {
+    name   = "name"
+    values = ["al2023-ami-2023.*-x86_64"]
   }
 }
 
-# 5. EC2 Instance using the dynamic AMI data source
-resource "aws_instance" "web" {
-  ami                         = data.aws_ami.al2023.id
-  instance_type               = "t3.micro" # t3 instances are great for eu-north-1
-  key_name = "demokey"
-  subnet_id                   = aws_subnet.public.id
-  associate_public_ip_address = true
-  vpc_security_group_ids      = [aws_security_group.web_sg.id]
-
-  tags = { Name = "Broken-Web-Instance" }
+# 6. Deploy a Test EC2 Instance
+resource "aws_instance" "lab_vm" {
+  ami           = data.aws_ami.amazon_linux.id
+  instance_type = "t3.micro"
+  subnet_id     = aws_subnet.lab_subnet.id
+  tags          = { Name = "troubleshoot-vm" }
 }
